@@ -1,4 +1,4 @@
-﻿SKYRIM AI V5.0.0 — ALL-IN-ONE TOOLKIT
+SKYRIM AI V5.0.0 — ALL-IN-ONE TOOLKIT
 =====================================
 
 NEW USERS — ONE COMMAND
@@ -74,3 +74,26 @@ AI CONTRACT
   — never invent drive letters or fake MCP results.
 
 Read: V5-CHANGELOG.md | V5-AIO-GUIDE.md | BUNDLED-TOOLS\THIRD-PARTY-NOTICES.md
+
+HEADROOM + GROK (fresh install APPLIES durable wrap)
+----------------------------------------------------
+When Grok is selected (default), INSTALL-V5-AIO.ps1 runs
+TOOLS\Ensure-Headroom-Grok.ps1 which APPLIES the same durable
+Headroom wrap a working machine has:
+
+    headroom install apply --providers manual --target grok_build
+    User env GROK_MODELS_BASE_URL -> http://127.0.0.1:8787/v1
+    headroom install start   (persistent proxy)
+    [mcp_servers.headroom] in %USERPROFILE%\.grok\config.toml
+
+Repair / re-apply / check:
+
+    .\TOOLS\Ensure-Headroom-Grok.ps1
+    .\TOOLS\Ensure-Headroom-Grok.ps1 -CheckOnly
+
+Optional session launch (also fine):
+
+    headroom wrap grok
+    headroom wrap grok-build
+
+MCP-only registration is NOT a full Grok wrap. The AIO applies wrap.

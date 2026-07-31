@@ -123,3 +123,71 @@ powershell -ExecutionPolicy Bypass -File .\Fix-Grok-Codebase-Memory-Direct.ps1
 ```
 Then fully restart Grok and confirm `/mcp` shows codebase-memory-mcp.
 
+## v5.0.1 Codebase-memory safety hotfix
+
+Date: 2026-07-31
+
+### Problem
+The AIO installer used robocopy to force-extract codebase-memory-mcp into
+`%LOCALAPPDATA%\Programs\codebase-memory-mcp` even when MCP was already
+installed and running. A locked binary plus aggressive MCP rewires could
+break Grok/Codex/Claude wiring and force manual reinstall +
+`Fix-Grok-Codebase-Memory-Direct.ps1`.
+
+### Fixes
+1. **Keep existing install**: if `codebase-memory-mcp.exe` is already
+   discoverable (prefer `Programs\codebase-memory-mcp\`), installer does not overwrite it.
+2. **Locked-file guard**: `Copy-V5RoboSafe` / `Test-V5FileLocked` refuse to replace a running MCP binary.
+3. **Grok MCP upsert is idempotent**: `-SkipIfPresent` leaves a correct
+   `codebase-memory-mcp` (and other) block alone so housecarl/headroom/forge
+   are not stripped by a partial rewrite.
+4. **Canonical path**: wire always prefers
+   `%LOCALAPPDATA%\Programs\codebase-memory-mcp\codebase-memory-mcp.exe`
+   over any `.local\bin` shim.
+5. **Fix-Grok script**: same prefer-Programs + no-touch-if-correct behavior.
+
+### Manual recovery (if CBM broken again)
+```powershell
+cd "$env:LOCALAPPDATA\Programs\codebase-memory-mcp"
+# follow Install.txt / install.ps1 --ui
+powershell -ExecutionPolicy Bypass -File .\Fix-Grok-Codebase-Memory-Direct.ps1
+```
+Then fully restart Grok and confirm `/mcp` shows codebase-memory-mcp.
+
+
+## v5.0.2 Headroom Grok durable wrap (APPLY on install)
+
+Date: 2026-07-31
+
+### Problem
+For Grok, Headroom **MCP** (`headroom_compress` / `retrieve` / `stats`) is not enough.
+Automatic context compression requires Grok **API traffic** to route through the
+Headroom **proxy** (`GROK_MODELS_BASE_URL` -> `http://127.0.0.1:8787/...`).
+
+Earlier AIO only **checked** wrap / optionally started an existing deploy.
+A **fresh** machine did **not** get durable wrap the way a working author
+machine does after `headroom install apply` + live proxy.
+
+### Fix (fresh install now wraps Grok)
+`INSTALL-V5-AIO.ps1` (Grok provider, default) runs `TOOLS\Ensure-Headroom-Grok.ps1`
+which **applies**:
+
+1. `headroom install apply --preset persistent-task --providers manual --target grok_build`
+2. User env `GROK_MODELS_BASE_URL` and `GROK_MODEL_GROK_BUILD_BASE_URL` -> `http://127.0.0.1:8787/v1` (if unset)
+3. `headroom install start` when proxy is down
+4. Idempotent `[mcp_servers.headroom]` in `%USERPROFILE%\.grok\config.toml`
+
+Idempotent on already-wrapped machines: skips apply when deploy targets already
+include `grok` / `grok_build`; never kills a healthy proxy or live wrap session.
+
+### Manual
+```powershell
+.\TOOLS\Ensure-Headroom-Grok.ps1
+.\TOOLS\Ensure-Headroom-Grok.ps1 -CheckOnly
+```
+
+### Still separate
+codebase-memory binary path stays `%LOCALAPPDATA%\Programs\codebase-memory-mcp\`
+(see v5.0.1). Headroom wrap does not replace CBM; both are required for
+"codebase works under Grok with compression."
+

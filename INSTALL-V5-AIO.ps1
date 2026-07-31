@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Skyrim AI V5 - All-In-One installer for skills, plugins, MCP tools, and houseCARL (MO2/Vortex).
 
@@ -7,6 +7,7 @@
   - Installs provider skills (Claude/Codex/Grok/Kimi/Hermes)
   - Installs bundled offline tools OR fetches GitHub latest
   - Wires Grok MCP (housecarl, codebase-memory, headroom)
+  - Applies durable Headroom Grok wrap (install apply + proxy + env) so traffic compresses like a working machine
   - Runs houseCARL MO2/Vortex setup
   - Writes discovery state
 
@@ -67,7 +68,7 @@ function L($m){ [void]$log.Add("$(Get-Date -Format o) $m"); Write-Host $m }
 
 Write-Host ""
 Write-Host "=====================================================" -ForegroundColor Magenta
-Write-Host " Skyrim AI V5.0.0 - ALL-IN-ONE INSTALLER" -ForegroundColor Magenta
+Write-Host " Skyrim AI V5.0.2 - ALL-IN-ONE INSTALLER" -ForegroundColor Magenta
 Write-Host " Mode=$Mode  Providers=$($Providers -join ',')" -ForegroundColor Magenta
 Write-Host "=====================================================" -ForegroundColor Magenta
 Write-Host ""
@@ -399,6 +400,32 @@ if (-not $SkipMcpWire -and -not $SkillsOnly -and ($Providers -contains 'Grok')) 
   }
 }
 
+
+# ---------- Headroom Grok wrap (APPLY durable traffic proxy + MCP) ----------
+# Fresh install must leave Grok routed through Headroom the same way a working
+# machine does. MCP registration alone does NOT compress Grok traffic.
+if (-not $SkillsOnly -and ($Providers -contains 'Grok')) {
+  $hrEnsure = Join-Path $PackRoot 'TOOLS\Ensure-Headroom-Grok.ps1'
+  if (Test-Path $hrEnsure) {
+    Write-V5Step "Headroom Grok durable wrap (install apply + proxy + env + MCP)"
+    try {
+      $hrArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $hrEnsure)
+      if ($SkipMcpWire) { $hrArgs += '-SkipMcp' }
+      & powershell @hrArgs
+      if ($LASTEXITCODE -ne 0 -and $null -ne $LASTEXITCODE) {
+        Write-V5Warn ("Ensure-Headroom-Grok exited " + $LASTEXITCODE)
+      } else {
+        Write-V5Ok 'Headroom Grok durable wrap applied (or already present)'
+        $installed['headroom-grok-wrap'] = @{ status = 'applied' }
+      }
+    } catch {
+      Write-V5Warn ("Ensure-Headroom-Grok: " + $_.Exception.Message)
+      $installed['headroom-grok-wrap'] = @{ status = 'error'; error = $_.Exception.Message }
+    }
+  } else {
+    Write-V5Warn 'TOOLS\Ensure-Headroom-Grok.ps1 missing from pack'
+  }
+}
 # ---------- houseCARL MO2/Vortex ----------
 if (-not $SkipHouseCarlSetup -and -not $SkillsOnly) {
   $setup = Join-Path $PackRoot 'TOOLS\Setup-HouseCarl.ps1'
