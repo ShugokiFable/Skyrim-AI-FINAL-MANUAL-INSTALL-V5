@@ -300,15 +300,32 @@ if (-not $SkillsOnly) {
             Write-V5Ok "houseCARL -> $target"
           }
           elseif ($id -eq 'codebase-memory') {
-            New-Item -ItemType Directory -Force -Path $target | Out-Null
-            # zip may be flat exe
-            Copy-V5Robo -From $rootExtract -To $target
-            $exe = Join-Path $target 'codebase-memory-mcp.exe'
-            if (-not (Test-Path $exe)) { $exe = Find-V5FileUnder $target 'codebase-memory-mcp.exe' 4 }
-            if (-not $exe) { throw "codebase-memory-mcp.exe missing after extract" }
-            Set-V5UserEnv 'CODEBASE_MEMORY_MCP' $exe
-            $installed[$id] = @{ status='installed'; exe=$exe }
-            Write-V5Ok "codebase-memory -> $exe"
+            # NEVER overwrite a live/working codebase-memory install.
+            # Prefer existing Programs install; only extract when missing.
+            $existing = Find-V5CodebaseMemoryExe
+            if ($existing) {
+              Set-V5UserEnv 'CODEBASE_MEMORY_MCP' $existing
+              $installed[$id] = @{ status = 'kept-existing'; exe = $existing }
+              Write-V5Ok ("codebase-memory kept existing (no overwrite): " + $existing)
+            }
+            else {
+              New-Item -ItemType Directory -Force -Path $target | Out-Null
+              $destExe = Join-Path $target 'codebase-memory-mcp.exe'
+              if ((Test-Path -LiteralPath $destExe) -and (Test-V5FileLocked $destExe)) {
+                Write-V5Warn 'codebase-memory exe is locked (MCP running) - skip binary copy'
+                Set-V5UserEnv 'CODEBASE_MEMORY_MCP' $destExe
+                $installed[$id] = @{ status = 'skipped-locked'; exe = $destExe }
+              }
+              else {
+                Copy-V5RoboSafe -From $rootExtract -To $target -CriticalFiles @('codebase-memory-mcp.exe')
+                $exe = Join-Path $target 'codebase-memory-mcp.exe'
+                if (-not (Test-Path $exe)) { $exe = Find-V5FileUnder $target 'codebase-memory-mcp.exe' 4 }
+                if (-not $exe) { throw 'codebase-memory-mcp.exe missing after extract' }
+                Set-V5UserEnv 'CODEBASE_MEMORY_MCP' $exe
+                $installed[$id] = @{ status = 'installed'; exe = $exe }
+                Write-V5Ok ("codebase-memory -> " + $exe)
+              }
+            }
           }
           elseif ($id -eq 'spooky') {
             New-Item -ItemType Directory -Force -Path $target | Out-Null
@@ -343,21 +360,27 @@ if (-not $SkipMcpWire -and -not $SkillsOnly -and ($Providers -contains 'Grok')) 
   $hc = [Environment]::GetEnvironmentVariable('HOUSECARL_MCP','User')
   if (-not $hc) { $hc = $env:HOUSECARL_MCP }
   if ($hc -and (Test-Path $hc)) {
-    Update-V5GrokMcpBlock -Name 'housecarl' -Command $hc -Startup 120 -Tool 6000 -EnvMap @{ HouseCarl__Mo2InstanceDir = '%SKYRIM_MO2_INSTANCE%' }
+    Update-V5GrokMcpBlock -Name 'housecarl' -Command $hc -Startup 120 -Tool 6000 -EnvMap @{ HouseCarl__Mo2InstanceDir = '%SKYRIM_MO2_INSTANCE%'; SKYRIM_MO2_INSTANCE = '%SKYRIM_MO2_INSTANCE%' } -SkipIfPresent
   }
-  $cm = [Environment]::GetEnvironmentVariable('CODEBASE_MEMORY_MCP','User')
-  if (-not $cm) { $cm = $env:CODEBASE_MEMORY_MCP }
+  $cm = Find-V5CodebaseMemoryExe
+  if (-not $cm) {
+    $cm = [Environment]::GetEnvironmentVariable('CODEBASE_MEMORY_MCP','User')
+    if (-not $cm) { $cm = $env:CODEBASE_MEMORY_MCP }
+  }
   if ($cm -and (Test-Path $cm)) {
-    Update-V5GrokMcpBlock -Name 'codebase-memory-mcp' -Command $cm -Startup 90 -Tool 6000
+    $programs = Join-Path $env:LOCALAPPDATA 'Programs\codebase-memory-mcp\codebase-memory-mcp.exe'
+    if (Test-Path -LiteralPath $programs) { $cm = $programs }
+    Set-V5UserEnv 'CODEBASE_MEMORY_MCP' $cm
+    Update-V5GrokMcpBlock -Name 'codebase-memory-mcp' -Command $cm -Startup 90 -Tool 6000 -SkipIfPresent
   }
   $hr = $null
   try { $hr = (Get-Command headroom -EA SilentlyContinue).Source } catch {}
   if (-not $hr) { $hr = [Environment]::GetEnvironmentVariable('HEADROOM_CMD','User') }
   if ($hr -and (Test-Path $hr)) {
-    Update-V5GrokMcpBlock -Name 'headroom' -Command $hr -ArgList @('mcp','serve') -Startup 60 -Tool 600
+    Update-V5GrokMcpBlock -Name 'headroom' -Command $hr -ArgList @('mcp','serve') -Startup 60 -Tool 600 -SkipIfPresent
   } elseif ($hr) {
     # might be bare command name
-    Update-V5GrokMcpBlock -Name 'headroom' -Command 'headroom' -ArgList @('mcp','serve') -Startup 60 -Tool 600
+    Update-V5GrokMcpBlock -Name 'headroom' -Command 'headroom' -ArgList @('mcp','serve') -Startup 60 -Tool 600 -SkipIfPresent
   }
   # Forge if INSTALLATION.json exists in grok skills
   $forgeInst = Join-Path (Get-V5ProviderHome Grok $catalog) 'skills\skyrim-forge\INSTALLATION.json'

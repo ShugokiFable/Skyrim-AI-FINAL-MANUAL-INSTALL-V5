@@ -110,6 +110,32 @@ function Install-V5Winget([string[]]$Ids) {
   return $true
 }
 
+function Test-V5FileLocked([string]$Path) {
+  if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $false }
+  try {
+    $fs = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+    $fs.Close()
+    return $false
+  } catch {
+    return $true
+  }
+}
+
+function Find-V5CodebaseMemoryExe {
+  $cands = @()
+  if ($env:CODEBASE_MEMORY_MCP) { $cands += $env:CODEBASE_MEMORY_MCP }
+  $u = [Environment]::GetEnvironmentVariable('CODEBASE_MEMORY_MCP', 'User')
+  if ($u) { $cands += $u }
+  $cands += (Join-Path $env:LOCALAPPDATA 'Programs\codebase-memory-mcp\codebase-memory-mcp.exe')
+  $cands += (Join-Path $env:USERPROFILE '.local\bin\codebase-memory-mcp.exe')
+  foreach ($c in $cands) {
+    if ($c -and (Test-Path -LiteralPath $c -PathType Leaf)) {
+      return (Resolve-Path -LiteralPath $c).Path
+    }
+  }
+  return $null
+}
+
 function Update-V5GrokMcpBlock {
   param(
     [string]$Name,
@@ -117,17 +143,34 @@ function Update-V5GrokMcpBlock {
     [string[]]$ArgList = @(),
     [hashtable]$EnvMap = $null,
     [int]$Startup = 90,
-    [int]$Tool = 6000
+    [int]$Tool = 6000,
+    [switch]$SkipIfPresent
   )
   $grokDir = Join-Path $env:USERPROFILE '.grok'
   $configPath = Join-Path $grokDir 'config.toml'
   New-Item -ItemType Directory -Force -Path $grokDir | Out-Null
   $content = ''
   if (Test-Path -LiteralPath $configPath) {
+    $content = Get-Content -LiteralPath $configPath -Raw
+  }
+
+  $cmdNorm = ($Command -replace '\\', '/').Trim()
+  if ($SkipIfPresent -and $content) {
+    $nameEsc = [regex]::Escape($Name)
+    $m = [regex]::Match($content, '(?ms)^[ \t]*\[mcp_servers\.(?:' + $nameEsc + ')\][ \t]*\r?\n(?:.*?\r?\n)*?[ \t]*command[ \t]*=[ \t]*["'']([^"'']+)["'']')
+    if ($m.Success) {
+      $existingCmd = ($m.Groups[1].Value -replace '\\', '/').Trim()
+      if ($existingCmd -ieq $cmdNorm) {
+        Write-V5Ok ('Grok MCP unchanged (already correct): ' + $Name)
+        return
+      }
+    }
+  }
+
+  if (Test-Path -LiteralPath $configPath) {
     $ts = Get-Date -Format 'yyyyMMdd-HHmmss'
     $bak = $configPath + '.before-v5-' + $Name + '-' + $ts + '.bak'
     Copy-Item -LiteralPath $configPath -Destination $bak -Force
-    $content = Get-Content -LiteralPath $configPath -Raw
   }
 
   $nameEsc = [regex]::Escape($Name)
@@ -154,9 +197,16 @@ function Update-V5GrokMcpBlock {
   $block += 'tool_timeout_sec = ' + $Tool + $nl
 
   if ($EnvMap -and $EnvMap.Count -gt 0) {
-    $block += $nl + '# env (set at user scope by installer):' + $nl
+    $block += $nl + '[mcp_servers.' + $Name + '.env]' + $nl
     foreach ($k in $EnvMap.Keys) {
-      $block += '# ' + $k + ' = ' + [string]$EnvMap[$k] + $nl
+      $v = [string]$EnvMap[$k]
+      if ($v -match '^%(.+)%$') {
+        $en = $Matches[1]
+        $ev = [Environment]::GetEnvironmentVariable($en, 'User')
+        if (-not $ev) { $ev = [Environment]::GetEnvironmentVariable($en, 'Process') }
+        if ($ev) { $v = $ev }
+      }
+      $block += $k + ' = "' + ($v.Replace('\', '/')) + '"' + $nl
     }
   }
 
@@ -179,3 +229,12 @@ function Copy-V5Robo([string]$From, [string]$To) {
   }
 }
 
+function Copy-V5RoboSafe([string]$From, [string]$To, [string[]]$CriticalFiles = @()) {
+  foreach ($rel in $CriticalFiles) {
+    $destFile = Join-Path $To $rel
+    if ((Test-Path -LiteralPath $destFile -PathType Leaf) -and (Test-V5FileLocked $destFile)) {
+      throw ('REFUSE overwrite locked file (MCP likely running): ' + $destFile + ' - stop the AI app or MCP process first, or skip this component.')
+    }
+  }
+  Copy-V5Robo -From $From -To $To
+}
