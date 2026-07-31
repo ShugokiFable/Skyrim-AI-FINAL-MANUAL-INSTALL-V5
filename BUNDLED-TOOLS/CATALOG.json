@@ -1,0 +1,254 @@
+﻿{
+    "components":  [
+                       {
+                           "github":  {
+                                          "repo":  "houseCARL",
+                                          "owner":  "Avick3110"
+                                      },
+                           "id":  "housecarl",
+                           "runtimes":  [
+                                            "dotnet9",
+                                            "aspnetcore9"
+                                        ],
+                           "license":  "GPL-3.0-only",
+                           "target_dir":  "%LOCALAPPDATA%\\houseCARL",
+                           "required_for":  [
+                                                "load-order",
+                                                "patch-esp",
+                                                "nexus-lookup"
+                                            ],
+                           "name":  "houseCARL",
+                           "mcp":  true,
+                           "offline_asset":  "houseCARL-1.9.0.zip",
+                           "kind":  "mcp-binary+skills",
+                           "setup_after":  "Setup-HouseCarl.ps1",
+                           "asset_match":  [
+                                               "houseCARL-*.zip",
+                                               "*houseCARL*.zip"
+                                           ],
+                           "install":  "zip-extract",
+                           "exe_rel":  "server\\housecarl-mcp.exe"
+                       },
+                       {
+                           "github":  {
+                                          "repo":  "spookys-automod-toolkit",
+                                          "owner":  "SpookyPirate"
+                                      },
+                           "id":  "spooky",
+                           "runtimes":  [
+                                            "dotnet8-sdk"
+                                        ],
+                           "license":  "see-upstream",
+                           "target_dir":  "%LOCALAPPDATA%\\Skyrim-AI-V5\\spookys-automod-toolkit",
+                           "required_for":  [
+                                                "esp-cli",
+                                                "papyrus-cli",
+                                                "nif",
+                                                "bsa"
+                                            ],
+                           "name":  "Spooky\u0027s AutoMod Toolkit",
+                           "verify":  "dotnet run --project src/SpookysAutomod.Cli -- --help",
+                           "offline_asset":  "spookys-automod-toolkit-v1.11.2.zip",
+                           "kind":  "cli-toolkit",
+                           "asset_match":  [
+                                               "spookys-automod-toolkit-*.zip"
+                                           ],
+                           "install":  "zip-extract",
+                           "env":  "SPOOKY_AUTOMOD_ROOT"
+                       },
+                       {
+                           "github":  {
+                                          "repo":  "codebase-memory-mcp",
+                                          "owner":  "DeusData"
+                                      },
+                           "id":  "codebase-memory",
+                           "env":  "CODEBASE_MEMORY_MCP",
+                           "license":  "see-upstream",
+                           "target_dir":  "%LOCALAPPDATA%\\Programs\\codebase-memory-mcp",
+                           "required_for":  [
+                                                "code-graph"
+                                            ],
+                           "name":  "codebase-memory-mcp",
+                           "mcp":  true,
+                           "offline_asset":  "codebase-memory-mcp-windows-amd64.zip",
+                           "kind":  "mcp-binary",
+                           "asset_match":  [
+                                               "codebase-memory-mcp-windows-amd64.zip"
+                                           ],
+                           "install":  "zip-extract",
+                           "exe_rel":  "codebase-memory-mcp.exe"
+                       },
+                       {
+                           "install":  "pip-or-wheel",
+                           "id":  "headroom",
+                           "kind":  "mcp-python",
+                           "mcp":  true,
+                           "pip_spec":  "headroom-ai[mcp]",
+                           "github":  {
+                                          "repo":  "headroom",
+                                          "owner":  "headroomlabs-ai"
+                                      },
+                           "runtimes":  [
+                                            "python3"
+                                        ],
+                           "name":  "Headroom",
+                           "offline_asset":  "headroom_ai-0.33.0-cp310-abi3-win_amd64.whl",
+                           "license":  "see-upstream",
+                           "required_for":  [
+                                                "context-compress"
+                                            ],
+                           "asset_match":  [
+                                               "headroom_ai-*-cp310-abi3-win_amd64.whl",
+                                               "headroom-ai-*.tgz"
+                                           ]
+                       },
+                       {
+                           "install":  "skills-copy",
+                           "id":  "superpowers",
+                           "kind":  "skills-plugin",
+                           "claude_plugin":  true,
+                           "github":  {
+                                          "repo":  "superpowers",
+                                          "owner":  "obra"
+                                      },
+                           "name":  "Superpowers",
+                           "offline_asset":  "superpowers-v6.2.0.zip",
+                           "license":  "see-upstream",
+                           "required_for":  [
+                                                "process-discipline"
+                                            ],
+                           "bundled_skills":  true
+                       },
+                       {
+                           "install":  "skills-copy",
+                           "id":  "ponytail",
+                           "kind":  "skills-plugin",
+                           "claude_plugin":  true,
+                           "github":  {
+                                          "repo":  "ponytail",
+                                          "owner":  "DietrichGebert"
+                                      },
+                           "name":  "Ponytail",
+                           "offline_asset":  "ponytail-v4.8.4.zip",
+                           "license":  "MIT",
+                           "required_for":  [
+                                                "minimal-diff"
+                                            ],
+                           "bundled_skills":  true
+                       },
+                       {
+                           "install":  "npx-or-npm",
+                           "id":  "codeburn",
+                           "kind":  "cli-optional",
+                           "runtimes":  [
+                                            "node22"
+                                        ],
+                           "note":  "Prefer npx codeburn (no large desktop bundle). Desktop Setup exe available on GitHub if desired.",
+                           "github":  {
+                                          "repo":  "codeburn",
+                                          "owner":  "getagentseal"
+                                      },
+                           "name":  "CodeBurn",
+                           "offline_asset":  null,
+                           "license":  "see-upstream",
+                           "required_for":  [
+                                                "ai-cost"
+                                            ],
+                           "npm_spec":  "codeburn"
+                       },
+                       {
+                           "install":  "manual-user-product",
+                           "id":  "skyrim-forge",
+                           "kind":  "external-product",
+                           "mcp":  true,
+                           "github":  null,
+                           "name":  "Skyrim Forge",
+                           "env":  "SKYRIM_FORGE_ROOT",
+                           "offline_asset":  null,
+                           "required_for":  [
+                                                "typed-automation",
+                                                "release-gates"
+                                            ],
+                           "note":  "Not redistributed. Install your Forge product separately; place INSTALLATION.json beside skyrim-forge skill or set SKYRIM_FORGE_ROOT."
+                       }
+                   ],
+    "pack_version":  "5.0.0",
+    "updated_utc":  "2026-07-31T03:47:53.1339596Z",
+    "providers":  {
+                      "Grok":  {
+                                   "skills":  "skills",
+                                   "home_default":  "%USERPROFILE%\\.grok",
+                                   "instructions":  null,
+                                   "instruction_src":  "AGENTS.md",
+                                   "workspace_only_instructions":  true,
+                                   "home_env":  "GROK_HOME"
+                               },
+                      "Hermes":  {
+                                     "skills":  "skills",
+                                     "home_default":  "%USERPROFILE%\\.hermes",
+                                     "instructions":  null,
+                                     "instruction_src":  "AGENTS.md",
+                                     "workspace_only_instructions":  true,
+                                     "home_env":  "HERMES_HOME"
+                                 },
+                      "Claude":  {
+                                     "instructions":  "CLAUDE.md",
+                                     "instruction_src":  "CLAUDE.md",
+                                     "home_env":  "CLAUDE_CONFIG_DIR",
+                                     "skills":  "skills",
+                                     "home_default":  "%USERPROFILE%\\.claude"
+                                 },
+                      "Kimi":  {
+                                   "instructions":  "AGENTS.md",
+                                   "instruction_src":  "AGENTS.md",
+                                   "home_env":  "KIMI_CODE_HOME",
+                                   "skills":  "skills",
+                                   "home_default":  "%USERPROFILE%\\.kimi-code"
+                               },
+                      "Codex":  {
+                                    "instructions":  "AGENTS.md",
+                                    "instruction_src":  "AGENTS.md",
+                                    "home_env":  "CODEX_HOME",
+                                    "skills":  "skills",
+                                    "home_default":  "%USERPROFILE%\\.codex"
+                                }
+                  },
+    "runtimes":  {
+                     "aspnetcore9":  {
+                                         "winget":  [
+                                                        "Microsoft.DotNet.AspNetCore.9"
+                                                    ],
+                                         "check":  "dotnet --list-runtimes | findstr AspNetCore.App.9"
+                                     },
+                     "dotnet9":  {
+                                     "winget":  [
+                                                    "Microsoft.DotNet.Runtime.9"
+                                                ],
+                                     "check":  "dotnet --list-runtimes | findstr /R \"Microsoft.NETCore.App 9\\.\""
+                                 },
+                     "node22":  {
+                                    "winget":  [
+                                                   "OpenJS.NodeJS.LTS"
+                                               ],
+                                    "note":  "For CodeBurn npx"
+                                },
+                     "dotnet8-sdk":  {
+                                         "winget":  [
+                                                        "Microsoft.DotNet.SDK.8"
+                                                    ],
+                                         "note":  "Needed to build/run Spooky from source"
+                                     },
+                     "python3":  {
+                                     "winget":  [
+                                                    "Python.Python.3.12"
+                                                ],
+                                     "note":  "For Headroom pip install"
+                                 }
+                 },
+    "notes":  [
+                  "Bundled offline copies are the pack author snapshot for offline/easy install.",
+                  "Use -Mode OnlineLatest or TOOLS\\Update-From-GitHub.ps1 to fetch newer releases.",
+                  "Skyrim Forge is NOT redistributed here — install separately and set SKYRIM_FORGE_ROOT.",
+                  "Third-party licenses remain with upstream projects (GPL/MIT/etc)."
+              ]
+}

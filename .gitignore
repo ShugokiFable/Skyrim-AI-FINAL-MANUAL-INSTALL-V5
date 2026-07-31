@@ -1,0 +1,27 @@
+﻿# OS / editor
+Thumbs.db
+Desktop.ini
+.DS_Store
+*.swp
+*~
+
+# Local secrets / machine state (never publish)
+.env
+.env.*
+*.pem
+id_rsa
+id_rsa.pub
+credentials.json
+**/INSTALLATION.json
+
+# Python / node local junk if someone runs tools in-tree
+__pycache__/
+*.pyc
+node_modules/
+.venv/
+venv/
+
+# Git / IDE
+.idea/
+.vscode/
+*.log

@@ -1,0 +1,46 @@
+﻿# Example MCP snippets for V5 tools
+# Copy only what you installed. Replace paths. Restart the AI app after edits.
+
+# ---------- Grok Build: %USERPROFILE%\.grok\config.toml ----------
+
+# [mcp_servers.codebase-memory-mcp]
+# command = "C:/Users/YOU/AppData/Local/Programs/codebase-memory-mcp/codebase-memory-mcp.exe"
+# args = []
+# enabled = true
+# startup_timeout_sec = 90
+# tool_timeout_sec = 6000
+
+# [mcp_servers.housecarl]
+# command = "C:/PATH/TO/housecarl-mcp.exe"
+# args = []
+# enabled = true
+# startup_timeout_sec = 120
+# tool_timeout_sec = 6000
+
+# [mcp_servers.skyrim-forge]
+# command = "C:/PATH/TO/Skyrim-Forge/.venv/Scripts/python.exe"
+# args = ["-m", "skyrim_forge", "mcp"]
+# enabled = true
+# startup_timeout_sec = 120
+
+# [mcp_servers.headroom]
+# command = "headroom"
+# args = ["mcp"]
+# enabled = true
+
+# ---------- Claude Code ----------
+# Prefer official installers/plugins:
+#   houseCARL-Setup.exe
+#   claude plugin install for Superpowers / Ponytail / Headroom when available
+#   headroom mcp install
+
+# ---------- Codex ----------
+# Use Codex MCP settings UI or config.toml per current Codex docs.
+# houseCARL ships a codex\ skill stub in its zip — MCP binary still required.
+
+# ---------- Env vars (optional, any shell profile) ----------
+# setx SKYRIM_FORGE_ROOT "D:\Tools\Skyrim-Forge-x.y.z"
+# setx HOUSECARL_MCP "D:\Tools\houseCARL\housecarl\server\housecarl-mcp.exe"
+# setx SPOOKY_AUTOMOD_ROOT "D:\Tools\spookys-automod-toolkit"
+# setx CODEBASE_MEMORY_MCP "%LOCALAPPDATA%\Programs\codebase-memory-mcp\codebase-memory-mcp.exe"
+# setx SKYRIM_MO2_INSTANCE "D:\MO2\instances\MyList"

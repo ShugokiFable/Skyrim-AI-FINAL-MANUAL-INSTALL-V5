@@ -1,0 +1,76 @@
+﻿SKYRIM AI V5.0.0 — ALL-IN-ONE TOOLKIT
+=====================================
+
+NEW USERS — ONE COMMAND
+-----------------------
+Double-click:
+
+    INSTALL-V5-AIO.bat
+
+Or PowerShell from this folder:
+
+    powershell -NoProfile -ExecutionPolicy Bypass -File .\INSTALL-V5-AIO.ps1
+
+That installs:
+  • Provider skills (Claude, Codex, Grok, Kimi, Hermes) — ~82 skills each
+  • houseCARL MCP (+ MO2 or Vortex shim setup)
+  • Spooky's AutoMod Toolkit
+  • codebase-memory-mcp
+  • Headroom (context compression)
+  • Superpowers + Ponytail (skills/plugins)
+  • CodeBurn (npm/npx, optional)
+  • Grok MCP wiring
+  • Tool discovery state
+
+Then FULLY restart your AI app(s).
+
+OPTIONS
+-------
+  .\INSTALL-V5-AIO.ps1 -Providers Grok,Claude
+  .\INSTALL-V5-AIO.ps1 -Mode OnlineLatest
+  .\INSTALL-V5-AIO.ps1 -WorkspaceRoot "D:\My\AI-Workspace"
+  .\INSTALL-V5-AIO.ps1 -SkillsOnly
+  .\INSTALL-V5-AIO.ps1 -ToolsOnly
+
+Modes:
+  BundledFirst  (default) use BUNDLED-TOOLS\offline, else GitHub
+  OnlineLatest            always GitHub releases/latest
+  BundledOnly             offline zips only (no network)
+
+UPDATE TOOLS LATER
+-------------------
+  .\TOOLS\Update-From-GitHub.ps1
+  .\TOOLS\Update-From-GitHub.ps1 -Components housecarl,codebase-memory -UpdateCatalogOffline
+  .\TOOLS\Ensure-Tools.ps1
+
+HOUSECARL (MO2 OR VORTEX)
+-------------------------
+  .\TOOLS\Setup-HouseCarl.ps1
+  .\TOOLS\Setup-HouseCarl.ps1 -RefreshOnly
+
+Docs: TOOLS\housecarl\README.md
+PDF:  TOOLS\housecarl\houseCARL-Vortex-shim-setup.pdf
+
+MANUAL / ADVANCED LAYOUT
+------------------------
+  1-RECOMMENDED-SEPARATE-TAILORED\   per-AI skill trees
+  2-OPTIONAL-SHARED-GENERIC\
+  BUNDLED-TOOLS\offline\             shipped tool zips/wheels
+  BUNDLED-TOOLS\plugins\             Superpowers + Ponytail trees
+  BUNDLED-TOOLS\CATALOG.json         component registry
+  COPY-TO-YOUR-WORKSPACE\
+  TOOLS\                             scripts
+  _V5-CANONICAL-SKILLS\              maintainer master skills
+
+NOT BUNDLED
+-----------
+  Skyrim Forge product — install yourself; set SKYRIM_FORGE_ROOT
+  or place INSTALLATION.json beside the skyrim-forge skill.
+
+AI CONTRACT
+-----------
+  Skills teach portable discovery. If a tool is missing, the AI must
+  recommend INSTALL-V5-AIO.ps1 / Ensure-Tools.ps1 / Update-From-GitHub.ps1
+  — never invent drive letters or fake MCP results.
+
+Read: V5-CHANGELOG.md | V5-AIO-GUIDE.md | BUNDLED-TOOLS\THIRD-PARTY-NOTICES.md

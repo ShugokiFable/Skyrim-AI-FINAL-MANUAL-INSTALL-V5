@@ -1,0 +1,68 @@
+OFFICIAL PATH AND BEHAVIOR BASIS
+================================
+
+Reviewed July 21, 2026.
+
+CODEX
+-----
+
+Provider-native user skills:
+
+    %CODEX_HOME%\skills
+    default %USERPROFILE%\.codex\skills
+
+Global instructions:
+
+    %CODEX_HOME%\AGENTS.md
+
+CLAUDE CODE
+-----------
+
+Personal skills:
+
+    %CLAUDE_CONFIG_DIR%\skills
+    default %USERPROFILE%\.claude\skills
+
+Global instructions:
+
+    %CLAUDE_CONFIG_DIR%\CLAUDE.md
+
+GROK BUILD
+----------
+
+Provider-native skills:
+
+    %GROK_HOME%\skills
+    default %USERPROFILE%\.grok\skills
+
+Project instructions use workspace AGENTS.md. This package does not create a
+provider-home AGENTS.md for Grok.
+
+KIMI CODE
+---------
+
+Provider-native skills:
+
+    %KIMI_CODE_HOME%\skills
+    default %USERPROFILE%\.kimi-code\skills
+
+Global instructions:
+
+    %KIMI_CODE_HOME%\AGENTS.md
+
+HERMES AGENT
+------------
+
+Provider-native skills:
+
+    %HERMES_HOME%\skills
+    default %USERPROFILE%\.hermes\skills
+
+Project rules use workspace AGENTS.md. SOUL.md is identity and is not modified.
+
+WORKSPACE
+---------
+
+No workspace path is embedded. The automatic installer accepts a user-selected
+workspace or skips workspace files. The manual package supplies neutral files to
+copy into any chosen workspace root.
