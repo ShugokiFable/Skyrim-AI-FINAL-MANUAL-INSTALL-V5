@@ -1,6 +1,6 @@
-# V5-Common.ps1 - shared helpers for Skyrim AI V5 AIO installer
+﻿# V5-Common.ps1 - shared helpers for Skyrim AI V5 AIO installer
 $script:V5PackRoot = $null
-$script:V5Headers = @{ 'User-Agent' = 'Skyrim-AI-V5-AIO/5.0.0' }
+$script:V5Headers = @{ 'User-Agent' = 'Skyrim-AI-V5-AIO/5.2.0' }
 
 function Get-V5PackRoot {
   if ($script:V5PackRoot -and (Test-Path -LiteralPath $script:V5PackRoot)) { return $script:V5PackRoot }
@@ -144,10 +144,18 @@ function Update-V5GrokMcpBlock {
     [hashtable]$EnvMap = $null,
     [int]$Startup = 90,
     [int]$Tool = 6000,
-    [switch]$SkipIfPresent
+    [switch]$SkipIfPresent,
+    # Codex uses the same [mcp_servers.<name>] TOML shape as Grok, so the same
+    # writer serves both. Defaults to ~/.grok/config.toml.
+    [string]$ConfigPath = $null
   )
-  $grokDir = Join-Path $env:USERPROFILE '.grok'
-  $configPath = Join-Path $grokDir 'config.toml'
+  if ($ConfigPath) {
+    $configPath = $ConfigPath
+    $grokDir = Split-Path $configPath -Parent
+  } else {
+    $grokDir = Join-Path $env:USERPROFILE '.grok'
+    $configPath = Join-Path $grokDir 'config.toml'
+  }
   New-Item -ItemType Directory -Force -Path $grokDir | Out-Null
   $content = ''
   if (Test-Path -LiteralPath $configPath) {

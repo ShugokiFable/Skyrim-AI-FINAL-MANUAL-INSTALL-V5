@@ -1,7 +1,7 @@
-SKYRIM AI V5.0.0 — ALL-IN-ONE TOOLKIT
+﻿SKYRIM AI V5.2.0 â€” ALL-IN-ONE TOOLKIT
 =====================================
 
-NEW USERS — ONE COMMAND
+NEW USERS â€” ONE COMMAND
 -----------------------
 Double-click:
 
@@ -12,15 +12,15 @@ Or PowerShell from this folder:
     powershell -NoProfile -ExecutionPolicy Bypass -File .\INSTALL-V5-AIO.ps1
 
 That installs:
-  • Provider skills (Claude, Codex, Grok, Kimi, Hermes) — ~82 skills each
-  • houseCARL MCP (+ MO2 or Vortex shim setup)
-  • Spooky's AutoMod Toolkit
-  • codebase-memory-mcp
-  • Headroom (context compression)
-  • Superpowers + Ponytail (skills/plugins)
-  • CodeBurn (npm/npx, optional)
-  • Grok MCP wiring
-  • Tool discovery state
+  â€¢ Provider skills (Claude, Codex, Grok, Kimi, Hermes) â€” ~82 skills each
+  â€¢ houseCARL MCP (+ MO2 or Vortex shim setup)
+  â€¢ Spooky's AutoMod Toolkit
+  â€¢ codebase-memory-mcp
+  â€¢ Headroom (context compression)
+  â€¢ Superpowers + Ponytail (skills/plugins)
+  â€¢ CodeBurn (npm/npx, optional)
+  â€¢ Grok MCP wiring
+  â€¢ Tool discovery state
 
 Then FULLY restart your AI app(s).
 
@@ -64,36 +64,40 @@ MANUAL / ADVANCED LAYOUT
 
 NOT BUNDLED
 -----------
-  Skyrim Forge product — install yourself; set SKYRIM_FORGE_ROOT
+  Skyrim Forge product â€” install yourself; set SKYRIM_FORGE_ROOT
   or place INSTALLATION.json beside the skyrim-forge skill.
 
 AI CONTRACT
 -----------
   Skills teach portable discovery. If a tool is missing, the AI must
   recommend INSTALL-V5-AIO.ps1 / Ensure-Tools.ps1 / Update-From-GitHub.ps1
-  — never invent drive letters or fake MCP results.
+  â€” never invent drive letters or fake MCP results.
 
 Read: V5-CHANGELOG.md | V5-AIO-GUIDE.md | BUNDLED-TOOLS\THIRD-PARTY-NOTICES.md
 
-HEADROOM + GROK (fresh install APPLIES durable wrap)
+HEADROOM + GROK (MCP only - do NOT wrap Grok inference)
 ----------------------------------------------------
-When Grok is selected (default), INSTALL-V5-AIO.ps1 runs
-TOOLS\Ensure-Headroom-Grok.ps1 which APPLIES the same durable
-Headroom wrap a working machine has:
+Headroom compresses context. It can also proxy a CLI's inference traffic,
+BUT its Grok proxy talks to https://api.x.ai and needs XAI_API_KEY.
 
-    headroom install apply --providers manual --target grok_build
-    User env GROK_MODELS_BASE_URL -> http://127.0.0.1:8787/v1
-    headroom install start   (persistent proxy)
-    [mcp_servers.headroom] in %USERPROFILE%\.grok\config.toml
+If you sign in to Grok with a SUBSCRIPTION (the normal login), your endpoint
+is https://cli-chat-proxy.grok.com - Headroom cannot forward that. Wrapping it
+breaks Grok: the model shows as "unknown", grok-4.5 disappears, and every turn
+fails with 401. v5.0 of this pack applied that wrap automatically. v5.2 does not.
 
-Repair / re-apply / check:
+The installer now only registers Headroom as an MCP server, which gives Grok
+headroom_compress / headroom_retrieve / headroom_stats. That is on-demand
+compression, not automatic traffic compression. For a subscription account it
+is the only mode that works.
 
-    .\TOOLS\Ensure-Headroom-Grok.ps1
-    .\TOOLS\Ensure-Headroom-Grok.ps1 -CheckOnly
+    .\TOOLS\Ensure-Headroom-Grok.ps1             MCP registration (auth aware)
+    .\TOOLS\Ensure-Headroom-Grok.ps1 -CheckOnly  report only
+    .\TOOLS\Ensure-Headroom-Grok.ps1 -Repair     undo a v5.0 wrap that broke Grok
+    .\TOOLS\Ensure-Headroom-Grok.ps1 -Wrap       opt in (refuses without XAI_API_KEY)
 
-Optional session launch (also fine):
+GROK SHOWS "unknown" MODEL? Run:
 
-    headroom wrap grok
-    headroom wrap grok-build
+    .\TOOLS\Ensure-Headroom-Grok.ps1 -Repair
 
-MCP-only registration is NOT a full Grok wrap. The AIO applies wrap.
+then open a NEW PowerShell window and run: grok
+

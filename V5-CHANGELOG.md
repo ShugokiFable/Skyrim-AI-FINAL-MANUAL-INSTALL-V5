@@ -1,4 +1,4 @@
-﻿# V5.0.0 changelog
+# V5.0.0 changelog
 
 Date: 2026-07-31  
 Base: Skyrim-AI-FINAL-MANUAL-INSTALL-v4.3.0
@@ -191,3 +191,87 @@ codebase-memory binary path stays `%LOCALAPPDATA%\Programs\codebase-memory-mcp\`
 (see v5.0.1). Headroom wrap does not replace CBM; both are required for
 "codebase works under Grok with compression."
 
+## v5.1.0 Headroom MCP-only for Grok + extras (BREAKING vs v5.0.2 wrap)
+
+Date: 2026-07-31
+
+### Why v5.0.2 was wrong for most Grok users
+v5.0.2 auto-applied `headroom install apply` and set `GROK_MODELS_BASE_URL` to the local
+Headroom proxy. That only works with **XAI_API_KEY** (api.x.ai).
+
+A normal **Grok subscription / OIDC** login uses `https://cli-chat-proxy.grok.com`.
+Headroom cannot forward that path, so wrapping produces:
+- model catalog empty -> UI shows **"unknown"**
+- chat **401** Unauthorized through `http://127.0.0.1:8787/...`
+
+### Fix (default now)
+- `TOOLS\Ensure-Headroom-Grok.ps1` is **auth-aware**:
+  - OIDC/session: **MCP only** + auto **-Repair** if a wrap is detected
+  - XAI_API_KEY: durable wrap only with explicit `-Wrap`
+- `INSTALL-V5-AIO.ps1` registers Headroom MCP and **never** reroutes Grok inference by default
+- PowerShell: do not ship `function grok { headroom wrap grok }`
+
+### New optional extras (`-WithExtras`)
+Non-overlapping third-party skills/MCP (see CATALOG scope notes):
+- code-review-skill (awesome-skills) - generic languages only
+- obsidian-skills (kepano) - vault/docs, not Skyrim records
+- claude-mem (thedotmack) - Claude Code cross-session memory only
+- playwright-mcp - browser automation for CLIs without a built-in browser
+- firecrawl-mcp - web scrape (not Nexus; houseCARL owns Nexus)
+- perplexity-mcp - needs PERPLEXITY_API_KEY
+
+```powershell
+.\INSTALL-V5-AIO.ps1 -WithExtras
+.\TOOLS\Ensure-Headroom-Grok.ps1 -Repair   # if Grok shows unknown after v5.0.2
+```
+
+### Upgrade from v5.0.2
+```powershell
+.\TOOLS\Ensure-Headroom-Grok.ps1 -Repair
+# new PowerShell window, then: grok
+.\INSTALL-V5-AIO.ps1 -WithExtras
+```
+
+## v5.2.0 — Headroom MCP-only for Grok + extras (supersedes bad v5.0.2 wrap)
+
+Date: 2026-07-31
+
+### Baselines
+- **GitHub before this release:** `v5.0.2` on main (tag) auto-wrapped Grok inference through Headroom.
+- That broke **subscription / OIDC** Grok logins (model **"unknown"**, chat **401**).
+- This release is the finished fix that was started on the local `v5-main` worktree (Claude incomplete, completed here).
+
+### Breaking change vs v5.0.2
+Default install **does NOT** set `GROK_MODELS_BASE_URL` or run `headroom install apply` for Grok.
+
+| Grok auth | Headroom mode |
+|-----------|----------------|
+| Subscription / OIDC (`cli-chat-proxy.grok.com`) | **MCP tools only** (compress/retrieve/stats) |
+| `XAI_API_KEY` (api.x.ai) | Optional inference wrap: `Ensure-Headroom-Grok.ps1 -Wrap` |
+
+### Repair if you already ran v5.0.2
+```powershell
+.\TOOLS\Ensure-Headroom-Grok.ps1 -Repair
+# open a NEW PowerShell window
+grok
+```
+
+### New optional extras (`-WithExtras`)
+| Component | Scope |
+|-----------|--------|
+| code-review-skill | Generic languages (not Skyrim-specific review) |
+| obsidian-skills | Vault/docs markdown only |
+| claude-mem | **Claude Code ONLY** — needs **Bun**; conversation memory, not codebase-memory |
+| playwright-mcp | Browser automation for CLIs without built-in browser |
+| firecrawl-mcp | Web scrape (not Nexus — houseCARL owns Nexus) |
+| perplexity-mcp | Needs `PERPLEXITY_API_KEY` |
+
+### Still from earlier hotfixes
+- v5.0.1: never overwrite live codebase-memory-mcp binary
+- Headroom + CBM are complementary, not replacements
+
+### Install
+```powershell
+.\INSTALL-V5-AIO.ps1
+.\INSTALL-V5-AIO.ps1 -WithExtras
+```

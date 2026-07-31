@@ -2,8 +2,8 @@
 name: headroom
 description: Use Headroom for on-demand context compression, retrieval by hash, and session stats via MCP. Recommend install when missing. Not a Skyrim record editor.
 metadata:
-  version: 5.0.0
-  final_pack_version: 5.0.0
+  version: 5.1.0
+  final_pack_version: 5.1.0
   upstream: https://github.com/headroomlabs-ai/headroom
 ---
 
@@ -27,13 +27,6 @@ pip install "headroom-ai[proxy]"   # proxy + tools
 headroom mcp install               # where supported (e.g. Claude Code)
 ```
 
-Optional full-traffic proxy:
-
-```text
-headroom proxy
-# point the AI app base URL at the local proxy per Headroom docs
-```
-
 ## When to use
 
 - Huge logs, greps, JSON dumps, crash stacks before reasoning
@@ -49,39 +42,71 @@ headroom proxy
 
 Works with any MCP host (Claude, Cursor, Codex, Grok, …) once the server is registered. If registration fails, say so and continue without Headroom.
 
-## Grok-specific (required for auto-compress)
+## Grok: MCP only. Never wrap Grok inference.
 
-MCP tools alone are helpers. **Grok traffic compression needs the proxy route**
-(`GROK_MODELS_BASE_URL` -> `http://127.0.0.1:8787/...`).
+**Do not run `headroom wrap grok`, and do not set `GROK_MODELS_BASE_URL`, unless
+the user has an `XAI_API_KEY`.**
 
-**Fresh V5 AIO install applies durable wrap automatically** when the Grok
-provider is selected. That is the same shape as a working machine:
+Headroom's Grok proxy forwards to `https://api.x.ai` and authenticates with
+`XAI_API_KEY` (`headroom/providers/grok/runtime.py` → `DEFAULT_API_URL`;
+`headroom/cli/wrap.py` → `openai_api_url="https://api.x.ai"`).
 
-1. `headroom install apply --providers manual --target grok_build`
-2. User env `GROK_MODELS_BASE_URL` / `GROK_MODEL_GROK_BUILD_BASE_URL` -> `:8787/v1`
-3. `headroom install start` (persistent proxy)
-4. `[mcp_servers.headroom]` in `~/.grok/config.toml`
-
-Pack helper (idempotent; does not kill a healthy proxy or live wrap):
-
-```text
-.\TOOLS\Ensure-Headroom-Grok.ps1
-.\TOOLS\Ensure-Headroom-Grok.ps1 -CheckOnly
-```
-
-Optional session launch:
+A Grok **subscription / OIDC login** (`~/.grok/auth.json` with `auth_mode=oidc`)
+does not use api.x.ai at all — its endpoint is
+`https://cli-chat-proxy.grok.com/v1`. Headroom has no code path for it, so
+wrapping such an account produces:
 
 ```text
-headroom wrap grok
-headroom wrap grok-build
+model catalog: all retries exhausted  ("model catalog fetch returned no models")
+  -> the model selector shows "unknown"; grok-4.5 becomes unselectable
+Unauthorized (401) from http://127.0.0.1:8787/p/<project>/v1/chat/completions
+  -> every turn fails
 ```
 
-Verify:
+This is an auth-shape mismatch, not a misconfiguration. There is no flag that
+makes the wrap work for a session login.
+
+### Decide by auth mode
+
+| `~/.grok/auth.json` | `XAI_API_KEY` | What Headroom may do |
+|---|---|---|
+| `auth_mode=oidc` (subscription) | absent | **MCP tools only** |
+| any | present | MCP tools **+** optional inference wrap |
+
+### Correct Grok setup
+
+```text
+.\TOOLS\Ensure-Headroom-Grok.ps1            # MCP registration, auth aware (default)
+.\TOOLS\Ensure-Headroom-Grok.ps1 -CheckOnly # report, change nothing
+.\TOOLS\Ensure-Headroom-Grok.ps1 -Repair    # undo a v5.0 wrap that broke Grok
+.\TOOLS\Ensure-Headroom-Grok.ps1 -Wrap      # opt in; refuses without XAI_API_KEY
+```
+
+`[mcp_servers.headroom]` in `~/.grok/config.toml` gives Grok
+`headroom_compress` / `headroom_retrieve` / `headroom_stats`. That is on-demand
+compression the agent calls deliberately — it is **not** automatic traffic
+compression, and for a subscription account it is the only mode available. Say
+that plainly rather than promising auto-compress.
+
+### Symptom → cause
+
+If a user reports Grok showing an **"unknown" model**, or losing access to
+grok-4.5, check in this order:
+
+1. `GROK_MODELS_BASE_URL` / `GROK_MODEL_GROK_BUILD_BASE_URL` set to `127.0.0.1` → wrap is active, remove it
+2. A `function grok` in the PowerShell profile calling `headroom wrap grok` → rename/remove it
+3. `~/.headroom/deploy/default/manifest.json` with `grok` / `grok_build` in `targets` → `headroom install remove --profile default` (the deploy re-applies those env vars on every health check)
+4. `~/.grok/models_cache.json` with `origin` pointing at `127.0.0.1` → delete it so Grok refetches the real catalog
+
+Then start a **new** shell and run `grok`.
+
+### Verify
 
 ```text
 headroom install status
-# User env GROK_MODELS_BASE_URL should point at 127.0.0.1:8787
-# Proxy /readyz should be healthy
+# For a subscription account the correct state is:
+#   no GROK_* base-url env vars
+#   no grok/grok_build deploy targets
+#   [mcp_servers.headroom] present in ~/.grok/config.toml
+#   ~/.grok/models_cache.json origin = https://cli-chat-proxy.grok.com/v1/models
 ```
-
-Do not tell users "MCP is enough" for Grok auto-compress.

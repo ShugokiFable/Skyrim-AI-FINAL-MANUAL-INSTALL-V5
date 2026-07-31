@@ -1,26 +1,37 @@
-# Ensure-Headroom-Grok.ps1
-# Fresh V5 install MUST leave Grok traffic routed through Headroom the same way a
-# working author machine does. MCP alone is NOT enough.
+﻿# Ensure-Headroom-Grok.ps1  (v5.2.0 - auth aware)
 #
-# Two pieces:
-#   1) Durable traffic wrap/proxy
-#        headroom install apply --providers manual --target grok_build
-#        + User env GROK_MODELS_BASE_URL / GROK_MODEL_GROK_BUILD_BASE_URL -> :8787
-#        + headroom install start (persistent proxy)
-#   2) MCP retrieve tools
-#        [mcp_servers.headroom] in %USERPROFILE%\.grok\config.toml
+# WHY THIS WAS REWRITTEN
+# ----------------------
+# v5.0 unconditionally applied a durable Headroom inference wrap for Grok:
+#     headroom install apply --providers manual --target grok_build
+#     User env GROK_MODELS_BASE_URL -> http://127.0.0.1:8787/v1
+# That BREAKS Grok CLI for every user who signs in with a Grok subscription.
 #
-# Safe defaults:
-#   - Does not kill a healthy running proxy or live wrap session
-#   - Idempotent: skips install apply when deploy already targets grok/grok_build
-#   - Never touches codebase-memory binaries
+# Headroom's Grok proxy talks to https://api.x.ai and authenticates with
+# XAI_API_KEY (headroom/providers/grok/runtime.py: DEFAULT_API_URL,
+# headroom/cli/wrap.py: openai_api_url="https://api.x.ai").
+# A subscription / OIDC login (~/.grok/auth.json auth_mode=oidc) does NOT use
+# api.x.ai - its inference endpoint is https://cli-chat-proxy.grok.com/v1.
+# Headroom has no code path for that endpoint, so the wrap produces:
+#     "model catalog fetch returned no models"  -> model displays as "unknown"
+#     "Unauthorized (401) from http://127.0.0.1:8787/.../v1/chat/completions"
+# and grok-4.5 becomes unselectable.
+#
+# WHAT THIS SCRIPT DOES NOW
+#   session/OIDC login (no XAI_API_KEY)  -> MCP registration ONLY (safe, default)
+#   XAI_API_KEY present                  -> durable wrap allowed, but only with -Wrap
+#   -Repair                              -> undo a wrap applied by v5.0
+#
+# Headroom still helps Grok in MCP mode: headroom_compress / headroom_retrieve /
+# headroom_stats are callable as tools. Only the inference proxy is incompatible.
 
 param(
   [int]$Port = 8787,
   [switch]$SkipMcp,
-  [switch]$SkipApply,
   [switch]$CheckOnly,
-  [switch]$StartProxyIfDown
+  [switch]$Wrap,       # opt in to the durable inference wrap (needs XAI_API_KEY)
+  [switch]$Repair,     # remove a previously applied wrap and unbreak Grok
+  [switch]$Force       # allow -Wrap even without XAI_API_KEY (not recommended)
 )
 
 $ErrorActionPreference = 'Continue'
@@ -28,6 +39,8 @@ function Ok($m){ Write-Host "  OK  $m" -ForegroundColor Green }
 function Warn($m){ Write-Host "  !!  $m" -ForegroundColor Yellow }
 function Bad($m){ Write-Host "  XX  $m" -ForegroundColor Red }
 function Step($m){ Write-Host "==> $m" -ForegroundColor Cyan }
+
+$GrokEnvNames = @('GROK_MODELS_BASE_URL', 'GROK_MODEL_GROK_BUILD_BASE_URL')
 
 function Find-HeadroomExe {
   if ($env:HEADROOM_CMD -and (Test-Path -LiteralPath $env:HEADROOM_CMD)) { return $env:HEADROOM_CMD }
@@ -52,18 +65,47 @@ function Test-HeadroomProxy([int]$P) {
   return $false
 }
 
-function Test-GrokWrapRunning {
-  $hits = Get-CimInstance Win32_Process -EA SilentlyContinue |
-    Where-Object { $_.CommandLine -and ($_.CommandLine -match 'headroom.*wrap\s+grok') }
-  return [bool]$hits
+# ---------------------------------------------------------------------------
+# Auth detection: the ONLY thing that decides whether the wrap can work.
+# ---------------------------------------------------------------------------
+function Get-GrokAuthMode {
+  # 'apikey'  -> XAI_API_KEY set; Headroom proxy (api.x.ai) can authenticate.
+  # 'session' -> OIDC / subscription login; Headroom proxy CANNOT authenticate.
+  # 'none'    -> not signed in yet.
+  foreach ($scope in @('Process', 'User', 'Machine')) {
+    $k = [Environment]::GetEnvironmentVariable('XAI_API_KEY', $scope)
+    if ($k -and $k.Trim()) { return 'apikey' }
+  }
+  $auth = Join-Path $env:USERPROFILE '.grok\auth.json'
+  if (Test-Path -LiteralPath $auth) {
+    try {
+      $raw = Get-Content -LiteralPath $auth -Raw -Encoding UTF8
+      if ($raw -match 'auth_mode"\s*:\s*"oidc"' -or $raw -match 'refresh_token') { return 'session' }
+      return 'session'
+    } catch { return 'session' }
+  }
+  return 'none'
 }
 
-function Get-HeadroomManifest {
-  $manifest = Join-Path $env:USERPROFILE '.headroom\deploy\default\manifest.json'
-  if (-not (Test-Path -LiteralPath $manifest)) { return $null }
+function Get-GrokModelsOrigin {
+  $cache = Join-Path $env:USERPROFILE '.grok\models_cache.json'
+  if (-not (Test-Path -LiteralPath $cache)) { return $null }
   try {
-    return Get-Content -LiteralPath $manifest -Raw -Encoding UTF8 | ConvertFrom-Json
+    $j = Get-Content -LiteralPath $cache -Raw -Encoding UTF8 | ConvertFrom-Json
+    return [pscustomobject]@{
+      origin = $j.origin
+      auth   = $j.auth_method
+      models = @($j.models.PSObject.Properties.Name)
+    }
   } catch { return $null }
+}
+
+function Get-HeadroomManifestPath { Join-Path $env:USERPROFILE '.headroom\deploy\default\manifest.json' }
+
+function Get-HeadroomManifest {
+  $manifest = Get-HeadroomManifestPath
+  if (-not (Test-Path -LiteralPath $manifest)) { return $null }
+  try { return Get-Content -LiteralPath $manifest -Raw -Encoding UTF8 | ConvertFrom-Json } catch { return $null }
 }
 
 function Test-GrokDeployTargets($manifest) {
@@ -72,191 +114,219 @@ function Test-GrokDeployTargets($manifest) {
   return ($t -contains 'grok_build') -or ($t -contains 'grok')
 }
 
-function Get-GrokBaseUrl {
-  $p = $env:GROK_MODELS_BASE_URL
-  if ($p) { return $p }
-  $u = [Environment]::GetEnvironmentVariable('GROK_MODELS_BASE_URL', 'User')
-  if ($u) { return $u }
-  $b = [Environment]::GetEnvironmentVariable('GROK_MODEL_GROK_BUILD_BASE_URL', 'User')
-  if ($b) { return $b }
-  return $null
-}
-
-function Set-UserEnvIfMissing([string]$Name, [string]$Value) {
-  $cur = [Environment]::GetEnvironmentVariable($Name, 'User')
-  if ($cur -and $cur.Trim().Length -gt 0) {
-    if ($cur -match '127\.0\.0\.1|localhost') {
-      Ok ("User env $Name already routes via Headroom: $cur")
-      return $false
+function Get-GrokRoutingEnv {
+  $found = @()
+  foreach ($n in $GrokEnvNames) {
+    foreach ($scope in @('Process', 'User', 'Machine')) {
+      $v = [Environment]::GetEnvironmentVariable($n, $scope)
+      if ($v -and $v.Trim()) { $found += [pscustomobject]@{ name = $n; scope = $scope; value = $v } }
     }
-    Warn ("User env $Name already set to non-local value; leaving alone: $cur")
-    return $false
   }
-  [Environment]::SetEnvironmentVariable($Name, $Value, 'User')
-  Set-Item -Path "Env:$Name" -Value $Value -EA SilentlyContinue
-  Ok ("Set User env $Name = $Value")
-  return $true
+  return $found
 }
 
-function Invoke-HeadroomApply([string]$Hr, [int]$P) {
-  Step 'Applying durable Headroom deploy for Grok Build (fresh-install wrap)'
-  # install apply target list only includes grok_build (not bare "grok").
-  # That still sets GROK_MODEL_GROK_BUILD_BASE_URL and starts the shared proxy.
-  # We also set GROK_MODELS_BASE_URL ourselves so plain Grok CLI sessions match.
+function Clear-GrokRoutingEnv {
+  $cleared = 0
+  foreach ($e in (Get-GrokRoutingEnv)) {
+    if ($e.value -notmatch '127\.0\.0\.1|localhost') {
+      Warn ("leaving non-local {0} ({1}) = {2}" -f $e.name, $e.scope, $e.value)
+      continue
+    }
+    if ($e.scope -eq 'Machine') {
+      Warn ("{0} is Machine-scoped; needs an elevated shell to clear" -f $e.name)
+      continue
+    }
+    [Environment]::SetEnvironmentVariable($e.name, $null, $e.scope)
+    Remove-Item -Path ("Env:" + $e.name) -ErrorAction SilentlyContinue
+    Ok ("cleared {0} ({1})" -f $e.name, $e.scope)
+    $cleared++
+  }
+  return $cleared
+}
+
+# ---------------------------------------------------------------------------
+# PowerShell profile: strip a `function grok { ... headroom wrap grok ... }`
+# override. v5.0 installs shipped one; it also clobbers grok-path-fix.ps1.
+# ---------------------------------------------------------------------------
+function Repair-GrokProfileFunction {
+  $profiles = @(
+    (Join-Path $env:USERPROFILE 'Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1'),
+    (Join-Path $env:USERPROFILE 'Documents\WindowsPowerShell\profile.ps1'),
+    (Join-Path $env:USERPROFILE 'Documents\PowerShell\Microsoft.PowerShell_profile.ps1'),
+    (Join-Path $env:USERPROFILE 'Documents\PowerShell\profile.ps1')
+  )
+  foreach ($p in $profiles) {
+    if (-not (Test-Path -LiteralPath $p)) { continue }
+    $txt = Get-Content -LiteralPath $p -Raw -Encoding UTF8
+    if ($txt -notmatch '(?ms)function\s+grok\s*\{[^}]*headroom') { continue }
+
+    $bak = $p + '.before-headroom-repair-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.bak'
+    Copy-Item -LiteralPath $p -Destination $bak -Force
+    # Rename the wrapping function instead of deleting it, so nothing is lost
+    # and the native `grok` (or grok-path-fix.ps1's) definition wins again.
+    $new = [regex]::Replace($txt, '(?m)^(\s*)function\s+grok\s*\{', '$1function grok-headroom {')
+    $enc = New-Object System.Text.UTF8Encoding($false)
+    [IO.File]::WriteAllText($p, $new, $enc)
+    Ok ("profile repaired: {0} (backup: {1})" -f $p, (Split-Path $bak -Leaf))
+    Warn 'the Headroom-wrapping function is now named grok-headroom; `grok` runs natively again'
+  }
+}
+
+# `headroom install remove` deletes the deploy scripts but can leave its two
+# scheduled tasks behind pointing at the now-missing ensure-headroom.cmd.
+# They are inert once the manifest is gone; tidy them when we have the rights.
+function Remove-OrphanHeadroomTasks {
+  $tasks = @(Get-ScheduledTask -TaskName 'headroom-*' -ErrorAction SilentlyContinue)
+  foreach ($t in $tasks) {
+    $exec = @($t.Actions | ForEach-Object { $_.Execute }) | Where-Object { $_ }
+    $orphan = $true
+    foreach ($e in $exec) { if (Test-Path -LiteralPath $e) { $orphan = $false } }
+    if (-not $orphan) { Ok ("scheduled task still live, leaving alone: " + $t.TaskName); continue }
+    try {
+      Unregister-ScheduledTask -TaskName $t.TaskName -Confirm:$false -ErrorAction Stop
+      Ok ("removed orphaned scheduled task: " + $t.TaskName)
+    } catch {
+      Warn ("could not remove scheduled task " + $t.TaskName + " (needs an elevated shell). It is inert - its target script is gone.")
+    }
+  }
+}
+
+function Register-HeadroomMcp([string]$Hr) {
+  $packCommon = Join-Path $PSScriptRoot 'V5-Common.ps1'
+  if (Test-Path -LiteralPath $packCommon) {
+    . $packCommon
+    Update-V5GrokMcpBlock -Name 'headroom' -Command $Hr -ArgList @('mcp','serve') -Startup 60 -Tool 600 -SkipIfPresent
+  } else {
+    Warn 'V5-Common.ps1 not beside this script; add [mcp_servers.headroom] to ~/.grok/config.toml manually'
+  }
+}
+
+# ---- main -----------------------------------------------------------------
+Step 'Headroom + Grok (auth aware)'
+$hr = Find-HeadroomExe
+if (-not $hr) {
+  Bad 'headroom.exe not found. Install Headroom first (AIO component "headroom", or: pip install headroom-ai[mcp]).'
+  exit 2
+}
+Ok ("headroom = " + $hr)
+
+$authMode = Get-GrokAuthMode
+$modelInfo = Get-GrokModelsOrigin
+switch ($authMode) {
+  'apikey'  { Ok  'Grok auth = XAI_API_KEY (api.x.ai) - Headroom inference wrap is possible' }
+  'session' { Ok  'Grok auth = subscription / OIDC session - Headroom inference wrap is NOT possible' }
+  'none'    { Warn 'Grok auth = not signed in yet - treating as session (safe default)' }
+}
+if ($modelInfo) {
+  Ok ("model catalog origin = {0} (auth_method={1}; models: {2})" -f $modelInfo.origin, $modelInfo.auth, ($modelInfo.models -join ', '))
+}
+
+$proxyUp = Test-HeadroomProxy -P $Port
+if ($proxyUp) { Ok ("Headroom proxy healthy on port " + $Port) } else { Ok ("no Headroom proxy on port " + $Port + " (fine - MCP mode does not need it)") }
+
+$routing = Get-GrokRoutingEnv
+$manifest = Get-HeadroomManifest
+$hasGrokTarget = Test-GrokDeployTargets $manifest
+$wrapped = ($routing.Count -gt 0) -or $hasGrokTarget
+
+if ($wrapped) {
+  Warn 'Grok is currently routed through Headroom:'
+  foreach ($e in $routing) { Warn ("  env {0} ({1}) = {2}" -f $e.name, $e.scope, $e.value) }
+  if ($hasGrokTarget) { Warn ('  deploy manifest targets: ' + ($manifest.targets -join ', ')) }
+} else {
+  Ok 'Grok inference is NOT routed through Headroom (correct for a session login)'
+}
+
+# ---- repair path ----------------------------------------------------------
+$needRepair = $Repair -or ($wrapped -and $authMode -ne 'apikey' -and -not $Wrap)
+if ($needRepair -and -not $CheckOnly) {
+  Step 'Repairing Grok routing (removing the incompatible inference wrap)'
+  [void](Clear-GrokRoutingEnv)
+  Repair-GrokProfileFunction
+  Remove-OrphanHeadroomTasks
+  if ($hasGrokTarget) {
+    Warn 'Headroom deploy manifest still lists grok targets.'
+    Warn ('  Remove them with:  "' + $hr + '" install remove --profile default')
+    Warn ('  or edit ' + (Get-HeadroomManifestPath) + ' and drop "grok"/"grok_build" from "targets".')
+    Warn '  Leaving the proxy itself alone - other tools may be using it.'
+  }
+  $cache = Join-Path $env:USERPROFILE '.grok\models_cache.json'
+  if (Test-Path -LiteralPath $cache) {
+    $ci = Get-GrokModelsOrigin
+    if ($ci -and $ci.origin -match '127\.0\.0\.1|localhost') {
+      Remove-Item -LiteralPath $cache -Force -ErrorAction SilentlyContinue
+      Ok 'removed poisoned models_cache.json (Grok will refetch the real catalog on next start)'
+    }
+  }
+  Ok 'repair done - start a NEW PowerShell window, then run: grok'
+}
+
+# ---- wrap path (opt in, API key only) -------------------------------------
+if ($Wrap -and -not $CheckOnly) {
+  if ($authMode -ne 'apikey' -and -not $Force) {
+    Bad 'REFUSING -Wrap: no XAI_API_KEY. A subscription/OIDC login 401s through the Headroom proxy.'
+    Bad 'Set XAI_API_KEY (api.x.ai account) and re-run, or use -Force if you really mean it.'
+    exit 1
+  }
+  Step 'Applying durable Headroom deploy for Grok (opt in)'
   $applyArgs = @(
     'install', 'apply',
     '--preset', 'persistent-task',
     '--providers', 'manual',
     '--target', 'grok_build',
     '--scope', 'user',
-    '--port', "$P",
+    '--port', "$Port",
     '--mode', 'cache',
     '--no-telemetry'
   )
   Write-Host ("  >> headroom " + ($applyArgs -join ' '))
-  & $Hr @applyArgs 2>&1 | ForEach-Object { Write-Host ("     " + $_) }
-  $code = $LASTEXITCODE
-  if ($code -ne 0 -and $null -ne $code) {
-    Warn ("headroom install apply exited $code - will still try env + start")
-  } else {
-    Ok 'headroom install apply completed'
-  }
-}
-
-# ---- main ----
-Step 'Headroom + Grok durable wrap'
-$hr = Find-HeadroomExe
-if (-not $hr) {
-  Bad 'headroom.exe not found. Install Headroom first (AIO Components include headroom, or: pip/uv install headroom-ai[proxy,mcp]).'
-  exit 2
-}
-Ok ("headroom = " + $hr)
-
-$proxyUp = Test-HeadroomProxy -P $Port
-$wrapUp = Test-GrokWrapRunning
-$base = Get-GrokBaseUrl
-$manifest = Get-HeadroomManifest
-$hasGrokTarget = Test-GrokDeployTargets $manifest
-
-if ($proxyUp) { Ok ("proxy healthy on port " + $Port) } else { Warn ("proxy NOT healthy on port " + $Port) }
-if ($wrapUp) { Ok 'headroom wrap grok process is running (session wrap)' } else { Ok 'no live wrap process (OK if durable install apply is used)' }
-if ($base -and $base -match '127\.0\.0\.1|localhost') {
-  Ok ("GROK_* BASE_URL routes via Headroom: " + $base)
-} elseif ($base) {
-  Warn ("GROK_* BASE_URL set but unexpected: " + $base)
-} else {
-  Warn 'GROK_MODELS_BASE_URL / GROK_MODEL_GROK_BUILD_BASE_URL not set yet'
-}
-
-if ($hasGrokTarget) {
-  Ok ('deploy manifest targets Grok: ' + ($manifest.targets -join ', '))
-} elseif ($manifest) {
-  Warn ('deploy manifest present but missing grok targets: ' + ($manifest.targets -join ', '))
-} else {
-  Warn 'No ~/.headroom/deploy/default manifest yet'
-}
-
-$doApply = -not $CheckOnly -and -not $SkipApply
-if ($doApply -and -not $hasGrokTarget) {
-  Invoke-HeadroomApply -Hr $hr -P $Port
-  $manifest = Get-HeadroomManifest
-  $hasGrokTarget = Test-GrokDeployTargets $manifest
-  if ($hasGrokTarget) {
-    Ok ('deploy now targets: ' + ($manifest.targets -join ', '))
-  } else {
-    Bad 'deploy still missing grok_build after install apply'
-  }
-} elseif ($doApply -and $hasGrokTarget) {
-  Ok 'durable Grok deploy already present - skip install apply (idempotent)'
-} elseif ($CheckOnly) {
-  Ok 'CheckOnly: not applying deploy'
-}
-
-# Durable User env (install apply should set these; belt-and-suspenders for fresh machines
-# where apply only set GROK_MODEL_GROK_BUILD_BASE_URL or mutations were skipped).
-if (-not $CheckOnly) {
-  Step 'Ensure durable User env routes Grok through Headroom proxy'
+  & $hr @applyArgs 2>&1 | ForEach-Object { Write-Host ("     " + $_) }
   $urlV1 = "http://127.0.0.1:$Port/v1"
-  [void](Set-UserEnvIfMissing -Name 'GROK_MODELS_BASE_URL' -Value $urlV1)
-  [void](Set-UserEnvIfMissing -Name 'GROK_MODEL_GROK_BUILD_BASE_URL' -Value $urlV1)
-  # Process-level so the rest of this installer session sees the route immediately
-  if (-not $env:GROK_MODELS_BASE_URL) { $env:GROK_MODELS_BASE_URL = $urlV1 }
-  if (-not $env:GROK_MODEL_GROK_BUILD_BASE_URL) { $env:GROK_MODEL_GROK_BUILD_BASE_URL = $urlV1 }
-}
-
-# Start durable proxy if down (default on for installer; CheckOnly skips unless -StartProxyIfDown)
-$wantStart = (-not $CheckOnly) -or $StartProxyIfDown
-if ($wantStart) {
-  $proxyUp = Test-HeadroomProxy -P $Port
-  if (-not $proxyUp) {
-    Step 'Starting durable Headroom deployment (does not kill other apps)'
+  foreach ($n in $GrokEnvNames) {
+    [Environment]::SetEnvironmentVariable($n, $urlV1, 'User')
+    Set-Item -Path ("Env:" + $n) -Value $urlV1 -EA SilentlyContinue
+    Ok ("set User env $n = $urlV1")
+  }
+  if (-not (Test-HeadroomProxy -P $Port)) {
     & $hr install start 2>&1 | ForEach-Object { Write-Host ("     " + $_) }
     Start-Sleep -Seconds 2
-    if (-not (Test-HeadroomProxy -P $Port)) {
-      # Fallback: ensure script from deploy profile if present
-      $ensureCmd = Join-Path $env:USERPROFILE '.headroom\deploy\default\ensure-headroom.cmd'
-      if (Test-Path -LiteralPath $ensureCmd) {
-        Warn 'install start did not bring proxy up - trying deploy ensure-headroom.cmd'
-        & cmd /c "`"$ensureCmd`"" 2>&1 | ForEach-Object { Write-Host ("     " + $_) }
-        Start-Sleep -Seconds 2
-      }
-    }
-    if (Test-HeadroomProxy -P $Port) { Ok 'proxy started' } else { Bad 'proxy still down after start attempts' }
-  } else {
-    Ok 'proxy already healthy - leave running wrap/proxy alone'
   }
+  if (Test-HeadroomProxy -P $Port) { Ok 'proxy healthy' } else { Bad 'proxy still down' }
 }
 
+# ---- MCP registration (always safe, always wanted) ------------------------
 if (-not $SkipMcp -and -not $CheckOnly) {
-  Step 'Ensure Grok MCP headroom block (idempotent)'
-  $packCommon = Join-Path $PSScriptRoot 'V5-Common.ps1'
-  if (Test-Path -LiteralPath $packCommon) {
-    . $packCommon
-    Update-V5GrokMcpBlock -Name 'headroom' -Command $hr -ArgList @('mcp','serve') -Startup 60 -Tool 600 -SkipIfPresent
-  } else {
-    $cfg = Join-Path $env:USERPROFILE '.grok\config.toml'
-    if (Test-Path -LiteralPath $cfg) {
-      $txt = Get-Content -LiteralPath $cfg -Raw
-      if ($txt -match '\[mcp_servers\.headroom\]') {
-        Ok 'Grok MCP headroom already present'
-      } else {
-        Warn 'V5-Common.ps1 missing; run from V5 TOOLS folder or manually add [mcp_servers.headroom]'
-      }
-    }
-  }
+  Step 'Registering Headroom as a Grok MCP server (compression tools, no inference reroute)'
+  Register-HeadroomMcp -Hr $hr
 }
 
-# Final status
-$proxyUp = Test-HeadroomProxy -P $Port
-$base = Get-GrokBaseUrl
-$manifest = Get-HeadroomManifest
-$hasGrokTarget = Test-GrokDeployTargets $manifest
+# ---- final status ---------------------------------------------------------
+$routing = Get-GrokRoutingEnv
 $mcpOk = $false
 $cfgPath = Join-Path $env:USERPROFILE '.grok\config.toml'
 if (Test-Path -LiteralPath $cfgPath) {
-  $cfgTxt = Get-Content -LiteralPath $cfgPath -Raw
-  $mcpOk = ($cfgTxt -match '\[mcp_servers\.headroom\]')
+  $mcpOk = ((Get-Content -LiteralPath $cfgPath -Raw -Encoding UTF8) -match '\[mcp_servers\.headroom\]')
 }
 
 Write-Host ''
-Write-Host 'FRESH-INSTALL EXPECTATION (Grok + codebase):' -ForegroundColor Cyan
-Write-Host '  1. Durable deploy targets grok_build (and preferably grok)'
-Write-Host '  2. User env GROK_MODELS_BASE_URL -> http://127.0.0.1:PORT/v1'
-Write-Host '  3. Headroom proxy healthy on that port'
-Write-Host '  4. [mcp_servers.headroom] in ~/.grok/config.toml'
-Write-Host '  5. codebase-memory-mcp at %LOCALAPPDATA%\Programs\codebase-memory-mcp\ (separate Fix script)'
-Write-Host 'Optional session launch: headroom wrap grok   /   headroom wrap grok-build'
+Write-Host 'EXPECTED STATE (Grok subscription / OIDC login):' -ForegroundColor Cyan
+Write-Host '  1. NO GROK_MODELS_BASE_URL / GROK_MODEL_GROK_BUILD_BASE_URL env var'
+Write-Host '  2. NO `function grok` that calls `headroom wrap grok`'
+Write-Host '  3. [mcp_servers.headroom] present in ~/.grok/config.toml'
+Write-Host '  4. `grok` shows grok-4.5, not "unknown"'
+Write-Host ''
+Write-Host 'EXPECTED STATE (XAI_API_KEY account, opt in):' -ForegroundColor Cyan
+Write-Host '  .\Ensure-Headroom-Grok.ps1 -Wrap    (adds the proxy routing back)'
 Write-Host ''
 
 $pass = $true
-if ($hasGrokTarget) { Ok 'PASS deploy targets Grok' } else { Bad 'FAIL deploy missing grok targets'; $pass = $false }
-if ($base -match '127\.0\.0\.1|localhost') { Ok ("PASS routing env: $base") } else { Bad 'FAIL no Headroom GROK_* BASE_URL'; $pass = $false }
-if ($proxyUp) { Ok 'PASS proxy healthy' } else { Bad 'FAIL proxy down'; $pass = $false }
-if ($SkipMcp) { Ok 'SKIP MCP check' } elseif ($mcpOk) { Ok 'PASS Grok MCP headroom' } else { Warn 'WARN Grok MCP headroom missing (wire may run later in AIO)'; }
-
-if ($pass) {
-  Ok 'RESULT: fresh-install Headroom Grok wrap is APPLIED (durable) - same shape as a working machine'
-  exit 0
+if ($authMode -eq 'apikey' -and $Wrap) {
+  if ($routing.Count -gt 0) { Ok 'PASS wrap routing present (API key mode)' } else { Bad 'FAIL wrap requested but no routing env'; $pass = $false }
+} else {
+  if ($routing.Count -eq 0) { Ok 'PASS no incompatible Grok inference routing' } else { Bad 'FAIL Grok still routed through Headroom - re-run with -Repair'; $pass = $false }
 }
-Bad 'RESULT: Headroom Grok wrap incomplete - see messages above'
+if ($SkipMcp) { Ok 'SKIP MCP check' } elseif ($mcpOk) { Ok 'PASS Grok MCP headroom registered' } else { Warn 'WARN [mcp_servers.headroom] missing' }
+
+if ($pass) { Ok 'RESULT: Grok + Headroom configured correctly for this account type'; exit 0 }
+Bad 'RESULT: incomplete - see messages above'
 exit 1

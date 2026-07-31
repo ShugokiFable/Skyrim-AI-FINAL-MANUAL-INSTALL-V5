@@ -1,4 +1,4 @@
-﻿# Skyrim AI FINAL MANUAL INSTALL v5.0.0
+# Skyrim AI FINAL MANUAL INSTALL v5.0.0
 
 All-in-one portable toolkit for AI-assisted Skyrim SE/AE modding.
 
@@ -39,7 +39,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\INSTALL-V5-AIO.ps1
 - **houseCARL** MCP + MO2 instance or Vortex shim setup
 - **Spooky's AutoMod Toolkit**
 - **codebase-memory-mcp**
-- **Headroom** (context compression)
+- **Headroom** (context compression, registered as an MCP server — see [Headroom + Grok](#headroom--grok))
 - **Superpowers** + **Ponytail** plugins/skills
 - **CodeBurn** (optional, via npm/npx)
 - Grok MCP wiring + portable tool discovery
@@ -105,10 +105,68 @@ Notable upstream projects:
 
 Do not re-upload third-party binaries to Nexus as your own work. Keep attribution. Prefer `TOOLS\Update-From-GitHub.ps1` for newer versions.
 
+## Headroom + Grok
+
+**The installer registers Headroom as an MCP server for Grok. It does not route
+Grok inference through Headroom, and neither should you.**
+
+Headroom's Grok proxy forwards to `https://api.x.ai` and authenticates with
+`XAI_API_KEY`. A Grok **subscription** login (the normal one) uses
+`https://cli-chat-proxy.grok.com` instead, which Headroom cannot forward.
+Wrapping such an account breaks Grok:
+
+```text
+model catalog: all retries exhausted   ->  model selector shows "unknown"
+Unauthorized (401) from http://127.0.0.1:8787/.../v1/chat/completions
+```
+
+grok-4.5 becomes unselectable. **v5.0 of this pack applied that wrap
+automatically — that was the bug. v5.1 does not.**
+
+### Grok shows an "unknown" model / grok-4.5 is gone
+
+```powershell
+.\TOOLS\Ensure-Headroom-Grok.ps1 -Repair
+```
+
+Then open a **new** PowerShell window and run `grok`. The repair clears the
+`GROK_MODELS_BASE_URL` / `GROK_MODEL_GROK_BUILD_BASE_URL` env vars, renames any
+`function grok` that calls `headroom wrap grok`, deletes a poisoned
+`models_cache.json`, and tells you how to drop the durable deploy.
+
+If a `~/.headroom/deploy/default/manifest.json` lists `grok` or `grok_build` in
+`targets`, remove it — that deploy re-applies the breaking env vars on every
+health check, so Grok re-breaks at logon:
+
+```powershell
+headroom install remove --profile default
+```
+
+### Other Ensure-Headroom-Grok modes
+
+| Command | Effect |
+|---|---|
+| `.\TOOLS\Ensure-Headroom-Grok.ps1` | MCP registration, auth aware (what the installer runs) |
+| `... -CheckOnly` | Report state, change nothing |
+| `... -Repair` | Undo a v5.0 wrap |
+| `... -Wrap` | Opt in to the inference proxy; **refuses without `XAI_API_KEY`** |
+
+MCP mode gives Grok `headroom_compress` / `headroom_retrieve` /
+`headroom_stats` — on-demand compression the agent calls deliberately. It is not
+automatic traffic compression, and for a subscription account it is the only
+mode that works.
+
 ## Version
 
-**v5.0.0** — based on `Skyrim-AI-FINAL-MANUAL-INSTALL-v4.3.0`
+**v5.1.0** — Headroom/Grok wrap made auth aware; extra skills and MCP servers added.
+Based on `Skyrim-AI-FINAL-MANUAL-INSTALL-v5.0.0`.
 
 ## License
 
 Pack documentation and original installer scripts are provided as-is for personal and community use. Third-party tools inside `BUNDLED-TOOLS` keep their own licenses (see notices file).
+
+## Current release: v5.2.0
+
+- **Grok + Headroom:** MCP only by default. Do **not** wrap subscription Grok through Headroom (that was the v5.0.2 bug: model "unknown" / 401).
+- **Repair:** `.\TOOLS\Ensure-Headroom-Grok.ps1 -Repair`
+- **Extras:** `.\INSTALL-V5-AIO.ps1 -WithExtras` (claude-mem is Claude Code only and needs Bun)

@@ -6,8 +6,11 @@
   New users: run this once from the pack root.
   - Installs provider skills (Claude/Codex/Grok/Kimi/Hermes)
   - Installs bundled offline tools OR fetches GitHub latest
-  - Wires Grok MCP (housecarl, codebase-memory, headroom)
-  - Applies durable Headroom Grok wrap (install apply + proxy + env) so traffic compresses like a working machine
+  - Wires Grok MCP (housecarl, codebase-memory, headroom as MCP only)
+  - NEVER wraps Grok inference through Headroom for subscription/OIDC logins
+    (that caused model "unknown" / 401). Opt-in wrap only with XAI_API_KEY.
+  - Optional -WithExtras: code-review, obsidian-skills, claude-mem, playwright,
+    firecrawl, perplexity MCP
   - Runs houseCARL MO2/Vortex setup
   - Writes discovery state
 
@@ -49,8 +52,19 @@ param(
   [switch]$SkipHouseCarlSetup,
   [switch]$SkipMcpWire,
   [switch]$SkillsOnly,
-  [switch]$ToolsOnly
+  [switch]$ToolsOnly,
+  # Opt-in third-party extras (see BUNDLED-TOOLS\CATALOG.json scope_note on each):
+  #   code-review-skill  obsidian-skills  claude-mem
+  #   playwright-mcp     firecrawl-mcp    perplexity-mcp
+  [switch]$WithExtras
 )
+
+if ($WithExtras) {
+  $Components = @($Components) + @(
+    'code-review-skill', 'obsidian-skills', 'claude-mem',
+    'playwright-mcp', 'firecrawl-mcp', 'perplexity-mcp'
+  ) | Select-Object -Unique
+}
 
 $ErrorActionPreference = 'Stop'
 $PackRoot = $PSScriptRoot
@@ -68,7 +82,7 @@ function L($m){ [void]$log.Add("$(Get-Date -Format o) $m"); Write-Host $m }
 
 Write-Host ""
 Write-Host "=====================================================" -ForegroundColor Magenta
-Write-Host " Skyrim AI V5.0.2 - ALL-IN-ONE INSTALLER" -ForegroundColor Magenta
+Write-Host " Skyrim AI V5.2.0 - ALL-IN-ONE INSTALLER (Headroom MCP-only for Grok)" -ForegroundColor Magenta
 Write-Host " Mode=$Mode  Providers=$($Providers -join ',')" -ForegroundColor Magenta
 Write-Host "=====================================================" -ForegroundColor Magenta
 Write-Host ""
@@ -350,6 +364,164 @@ if (-not $SkillsOnly) {
           Remove-Item -LiteralPath $stage -Recurse -Force -EA SilentlyContinue
         }
       }
+      # ---- extras: skills fetched from a git repo -------------------------
+      # Layout differs per repo: some ARE one skill (skill_folder), some ship a
+      # skills/ directory of several (skills_subdir). Both land in every
+      # selected provider's skills folder, which is what all five CLIs read.
+      'skills-git' {
+        $wanted = @($Providers | Where-Object { $comp.providers -contains $_ })
+        if (-not $wanted) { Write-V5Warn "${id}: no selected provider wants it"; $installed[$id] = @{ status='skipped' }; continue }
+        $stage = Join-Path $env:TEMP "v5-skillsgit-$id-$(Get-Random)"
+        try {
+          if (Get-Command git -EA SilentlyContinue) {
+            # git writes "Cloning into ..." to stderr even on success; with
+            # $ErrorActionPreference='Stop' that would surface as a failure.
+            $prevEap = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            try {
+              & git clone --depth 1 --quiet $comp.git_url $stage 2>&1 | ForEach-Object { Write-Host ("     " + $_) }
+              $gitCode = $LASTEXITCODE
+            } finally { $ErrorActionPreference = $prevEap }
+            if ($gitCode -ne 0) { throw "git clone exited $gitCode for $($comp.git_url)" }
+          } else {
+            # No git: fall back to the branch tarball via the release/zip path.
+            $zip = Join-Path $cache "$id-main.zip"
+            $u = "https://github.com/$($comp.github.owner)/$($comp.github.repo)/archive/refs/heads/main.zip"
+            Save-V5Url -Url $u -OutFile $zip
+            Expand-V5Zip -Zip $zip -Dest $stage
+            $stage = Resolve-V5SingleRoot $stage
+          }
+          if (-not (Test-Path $stage)) { throw "fetch failed for $id" }
+          $pairs = @()
+          if ($comp.skills_subdir) {
+            $srcRoot = Join-Path $stage $comp.skills_subdir
+            if (-not (Test-Path $srcRoot)) { throw "${id}: expected '$($comp.skills_subdir)' in the repo" }
+            foreach ($sk in Get-ChildItem $srcRoot -Directory) { $pairs += @{ name = $sk.Name; path = $sk.FullName } }
+          } else {
+            $pairs += @{ name = $comp.skill_folder; path = $stage }
+          }
+          foreach ($prov in $wanted) {
+            $destRoot = Join-Path (Get-V5ProviderHome -Provider $prov -Catalog $catalog) 'skills'
+            foreach ($pair in $pairs) {
+              Copy-V5Robo -From $pair.path -To (Join-Path $destRoot $pair.name)
+            }
+            Write-V5Ok ("$id -> $prov ({0} skill(s))" -f $pairs.Count)
+          }
+          $installed[$id] = @{ status='installed'; skills=@($pairs.name); providers=$wanted }
+          if ($comp.scope_note) { Write-V5Warn ("scope: " + $comp.scope_note) }
+        } catch {
+          Write-V5Bad ("$id failed: " + $_.Exception.Message)
+          $installed[$id] = @{ status='failed'; error=$_.Exception.Message }
+        } finally {
+          Remove-Item -LiteralPath $stage -Recurse -Force -EA SilentlyContinue
+        }
+      }
+
+      # ---- extras: Claude Code plugin --------------------------------------
+      'claude-plugin' {
+        # HARD LOCK: never install Claude-only plugins for other providers
+        if ($id -eq 'claude-mem' -or ($comp.providers -and ($comp.providers -notcontains 'Grok') -and ($comp.providers -contains 'Claude') -and ($comp.providers.Count -eq 1))) {
+          if ($Providers -notcontains 'Claude') {
+            Write-V5Warn "$id is Claude Code ONLY - skipped (not for Grok/Codex/Kimi/Hermes)"
+            $installed[$id] = @{ status='skipped-claude-only' }
+            continue
+          }
+        }
+        if ($Providers -notcontains 'Claude') { Write-V5Warn "$id is Claude Code only - skipped"; $installed[$id] = @{ status='skipped' }; continue }
+        # claude-mem worker needs Bun (bun:sqlite). Without it Claude shows red MCP errors.
+        if ($id -eq 'claude-mem') {
+          $bunOk = $false
+          try { $bunOk = [bool](Get-Command bun -EA SilentlyContinue) } catch {}
+          if (-not $bunOk -and $env:BUN -and (Test-Path -LiteralPath $env:BUN)) { $bunOk = $true }
+          if (-not $bunOk) {
+            $bunUser = Join-Path $env:USERPROFILE '.bun\bin\bun.exe'
+            if (Test-Path -LiteralPath $bunUser) { $bunOk = $true; $env:PATH = ((Join-Path $env:USERPROFILE '.bun\bin') + ';' + $env:PATH) }
+          }
+          if (-not $bunOk) {
+            Write-V5Warn 'claude-mem requires Bun (https://bun.sh). Install Bun, open a NEW shell, then re-run -WithExtras.'
+            Write-V5Warn 'Without Bun the plugin installs but MCP tools go red (worker cannot start).'
+            $installed[$id] = @{ status='skipped-no-bun'; note='install Bun then re-run' }
+            continue
+          } else {
+            Write-V5Ok 'Bun present (required for claude-mem worker)'
+          }
+        }
+        if (-not (Get-Command npx -EA SilentlyContinue)) {
+          Write-V5Warn "$id needs Node/npx. Install Node, then: npx $($comp.npx_install -join ' ')"
+          $installed[$id] = @{ status='skipped-no-node' }
+          continue
+        }
+        try {
+          & npx @($comp.npx_install) 2>&1 | Out-Host
+          $installed[$id] = @{ status='installed'; via='npx' }
+          Write-V5Ok "$id installed (restart Claude Code to load the plugin)"
+          if ($comp.scope_note) { Write-V5Warn ("scope: " + $comp.scope_note) }
+        } catch {
+          Write-V5Warn ("$id via npx failed. In Claude Code run: /plugin marketplace add $($comp.marketplace[0])  then  /plugin install $($comp.marketplace[1])")
+          $installed[$id] = @{ status='manual'; error=$_.Exception.Message }
+        }
+      }
+
+      # ---- extras: npx-launched MCP servers --------------------------------
+      # Nothing is installed; npx resolves the package on first launch. We only
+      # write the server block into each provider's MCP config.
+      'mcp-npx' {
+        $wanted = @($Providers | Where-Object { $comp.providers -contains $_ })
+        if (-not $wanted) { Write-V5Warn "${id}: not wanted by any selected provider"; $installed[$id] = @{ status='skipped' }; continue }
+        if (-not (Get-Command npx -EA SilentlyContinue)) {
+          Write-V5Warn "$id needs Node/npx - skipping registration so we do not write a broken MCP entry"
+          $installed[$id] = @{ status='skipped-no-node' }
+          continue
+        }
+        $envMap = $null
+        $keyName = $comp.api_key_env
+        if ($keyName) {
+          $keyVal = [Environment]::GetEnvironmentVariable($keyName, 'User')
+          if (-not $keyVal) { $keyVal = [Environment]::GetEnvironmentVariable($keyName, 'Process') }
+          if ($keyVal) {
+            $envMap = @{ $keyName = $keyVal }
+          } elseif ($comp.api_key_optional) {
+            Write-V5Warn "${id}: no $keyName - registering anyway ($($comp.keyless_note))"
+          } else {
+            Write-V5Warn "${id}: no $keyName set. Get a key, run: setx $keyName ""<key>"" then re-run with -WithExtras"
+            $installed[$id] = @{ status='skipped-no-key'; needs=$keyName }
+            continue
+          }
+        }
+        $regs = @()
+        foreach ($prov in $wanted) {
+          switch ($prov) {
+            'Grok'  {
+              Update-V5GrokMcpBlock -Name $id -Command $comp.npx_command -ArgList @($comp.npx_args) -EnvMap $envMap -Startup 120 -Tool 6000 -SkipIfPresent
+              $regs += 'Grok'
+            }
+            'Codex' {
+              $cfg = Join-Path (Get-V5ProviderHome -Provider Codex -Catalog $catalog) 'config.toml'
+              Update-V5GrokMcpBlock -Name $id -Command $comp.npx_command -ArgList @($comp.npx_args) -EnvMap $envMap -Startup 120 -Tool 6000 -SkipIfPresent -ConfigPath $cfg
+              $regs += 'Codex'
+            }
+            'Claude' {
+              if (Get-Command claude -EA SilentlyContinue) {
+                $addArgs = @('mcp', 'add', '--scope', 'user')
+                if ($envMap) { foreach ($k in $envMap.Keys) { $addArgs += @('--env', ("{0}={1}" -f $k, $envMap[$k])) } }
+                $addArgs += @($id, '--', $comp.npx_command) + @($comp.npx_args)
+                & claude @addArgs 2>&1 | Out-Host
+                $regs += 'Claude'
+              } else {
+                Write-V5Warn "$id for Claude: run  claude mcp add --scope user $id -- $($comp.npx_command) $($comp.npx_args -join ' ')"
+              }
+            }
+            default {
+              Write-V5Warn ("{0}: add this MCP block to {1} yourself:" -f $id, $prov)
+              Write-Host ("      command = ""{0}""  args = [{1}]" -f $comp.npx_command, (($comp.npx_args | ForEach-Object { '"' + $_ + '"' }) -join ', '))
+            }
+          }
+        }
+        $installed[$id] = @{ status='registered'; providers=$regs; key=$keyName }
+        Write-V5Ok ("$id registered for: " + ($regs -join ', '))
+        if ($comp.scope_note) { Write-V5Warn ("scope: " + $comp.scope_note) }
+      }
+
       default { Write-V5Warn "No installer for $($comp.install)" }
     }
   }
@@ -401,13 +573,17 @@ if (-not $SkipMcpWire -and -not $SkillsOnly -and ($Providers -contains 'Grok')) 
 }
 
 
-# ---------- Headroom Grok wrap (APPLY durable traffic proxy + MCP) ----------
-# Fresh install must leave Grok routed through Headroom the same way a working
-# machine does. MCP registration alone does NOT compress Grok traffic.
+# ---------- Headroom + Grok (MCP only; NEVER reroute inference) ----------
+# Headroom's Grok proxy authenticates against https://api.x.ai with XAI_API_KEY.
+# A Grok subscription / OIDC login uses https://cli-chat-proxy.grok.com instead,
+# which Headroom cannot forward - wrapping it kills the model catalog (the model
+# shows as "unknown") and 401s every turn. So the installer registers the
+# Headroom MCP tools and leaves inference alone.
+# API-key users can opt in afterwards:  .\TOOLS\Ensure-Headroom-Grok.ps1 -Wrap
 if (-not $SkillsOnly -and ($Providers -contains 'Grok')) {
   $hrEnsure = Join-Path $PackRoot 'TOOLS\Ensure-Headroom-Grok.ps1'
   if (Test-Path $hrEnsure) {
-    Write-V5Step "Headroom Grok durable wrap (install apply + proxy + env + MCP)"
+    Write-V5Step "Headroom Grok MCP registration (auth aware; repairs a v5.0 inference wrap)"
     try {
       $hrArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $hrEnsure)
       if ($SkipMcpWire) { $hrArgs += '-SkipMcp' }
@@ -415,12 +591,12 @@ if (-not $SkillsOnly -and ($Providers -contains 'Grok')) {
       if ($LASTEXITCODE -ne 0 -and $null -ne $LASTEXITCODE) {
         Write-V5Warn ("Ensure-Headroom-Grok exited " + $LASTEXITCODE)
       } else {
-        Write-V5Ok 'Headroom Grok durable wrap applied (or already present)'
-        $installed['headroom-grok-wrap'] = @{ status = 'applied' }
+        Write-V5Ok 'Headroom registered for Grok as MCP (inference left on the native endpoint)'
+        $installed['headroom-grok-mcp'] = @{ status = 'mcp-only' }
       }
     } catch {
       Write-V5Warn ("Ensure-Headroom-Grok: " + $_.Exception.Message)
-      $installed['headroom-grok-wrap'] = @{ status = 'error'; error = $_.Exception.Message }
+      $installed['headroom-grok-mcp'] = @{ status = 'error'; error = $_.Exception.Message }
     }
   } else {
     Write-V5Warn 'TOOLS\Ensure-Headroom-Grok.ps1 missing from pack'
